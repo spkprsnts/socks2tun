@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # android/arm64 is the only Android target Go can link without cgo.
+          - { goos: android, goarch: arm64 }
+          # Static Linux builds for the other Android ABIs (they run on Android).
+          - { goos: linux, goarch: arm, goarm: "7" }
+          - { goos: linux, goarch: "386" }
+          - { goos: linux, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: go build -trimpath -ldflags="-s -w -checklinkname=0" -o dist/socks2tun-${{ matrix.goos }}-${{ matrix.goarch }} .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: socks2tun-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/

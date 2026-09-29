@@ -1,0 +1,5 @@
+/socks2tun
+/socks2tun.exe
+/libsocks2tun.so
+/dist/
+*.test
