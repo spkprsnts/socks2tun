@@ -14,8 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/spkprsnts/socks2tun/internal/control"
 	"github.com/spkprsnts/socks2tun/internal/logx"
 	"github.com/spkprsnts/socks2tun/internal/netstack"
@@ -184,7 +182,7 @@ func (a *app) runTun(ctx context.Context) error {
 			return err
 		}
 		err = tunlink.SendFDRetry(ctx, a.cfg.TunUDS, theirs, a.cfg.UDSTimeout)
-		unix.Close(theirs) // the core holds its own duplicate now
+		tunlink.CloseFD(theirs) // the core holds its own duplicate now
 		if err != nil {
 			ours.Close()
 			return err

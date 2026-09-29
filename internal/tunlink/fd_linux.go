@@ -45,6 +45,9 @@ func FileFromFD(fd int, name string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), name), nil
 }
 
+// CloseFD closes a raw descriptor, e.g. the core's end after it was sent.
+func CloseFD(fd int) error { return unix.Close(fd) }
+
 // ackTimeout bounds the wait for the core's one-byte acknowledgement.
 const ackTimeout = 5 * time.Second
 
