@@ -162,6 +162,12 @@ func (a *app) controlLoop(r io.Reader) {
 			}
 		}
 	}
+	if err := sc.Err(); err != nil {
+		// E.g. a line over 64 KiB or a broken stdin: runtime commands stop,
+		// the tunnel keeps working with the current configuration.
+		logx.Errorf("control: read stdin: %v", err)
+		return
+	}
 	logx.Debugf("control input closed")
 }
 
