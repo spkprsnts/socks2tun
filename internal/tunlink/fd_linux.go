@@ -49,11 +49,15 @@ func FileFromFD(fd int, name string) (*os.File, error) {
 func CloseFD(fd int) error { return unix.Close(fd) }
 
 // ackTimeout bounds the wait for the core's one-byte acknowledgement.
-const ackTimeout = 5 * time.Second
+var ackTimeout = 5 * time.Second
 
 // SendFD passes fd to the core listening on the abstract Unix socket @name:
 // one data byte 0x01 with SCM_RIGHTS, then a one-byte ack from the core.
-func SendFD(name string, fd int) error {
+//
+// With noAck the core is not expected to acknowledge (PaperFlux closes the
+// connection instead): an ack byte, a closed connection and silence until
+// ackTimeout all count as delivered; only other read errors fail.
+func SendFD(name string, fd int, noAck bool) error {
 	s, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("socket: %w", err)
@@ -76,6 +80,8 @@ func SendFD(name string, fd int) error {
 		switch {
 		case err == unix.EINTR:
 			continue
+		case noAck && (err == nil || err == unix.EAGAIN):
+			return nil
 		case err == unix.EAGAIN:
 			return errors.New("no ack from core (timeout)")
 		case err != nil:
@@ -94,14 +100,14 @@ var retryPause = 250 * time.Millisecond
 // SendFDRetry repeats SendFD until it succeeds, ctx is done or timeout
 // (0 = no limit) elapses. Failures are logged, repeats of the same error at
 // most every few seconds.
-func SendFDRetry(ctx context.Context, name string, fd int, timeout time.Duration) error {
+func SendFDRetry(ctx context.Context, name string, fd int, timeout time.Duration, noAck bool) error {
 	var deadline time.Time
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
 	}
 	limiter := logx.Limiter{Interval: 5 * time.Second}
 	for {
-		err := SendFD(name, fd)
+		err := SendFD(name, fd, noAck)
 		if err == nil {
 			logx.Infof("tun fd sent to @%s", name)
 			return nil

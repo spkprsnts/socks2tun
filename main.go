@@ -40,6 +40,7 @@ func run() int {
 	fs.UintVar(&mtu, "mtu", 1280, "tunnel MTU")
 	fs.StringVar(&cfg.User, "user", "", "SOCKS5 username (enables RFC 1929 authentication)")
 	fs.StringVar(&cfg.Pass, "pass", "", "SOCKS5 password")
+	fs.BoolVar(&cfg.NoAck, "no-ack", false, "the core takes the descriptor without a one-byte ack (closes the connection instead)")
 	fs.DurationVar(&cfg.UDSTimeout, "uds-timeout", 60*time.Second, "give up delivering the descriptor after this long (0 = never)")
 	fs.DurationVar(&cfg.ConnectTimeout, "connect-timeout", 15*time.Second, "DNS + TCP connect timeout")
 	fs.DurationVar(&cfg.TCPIdle, "tcp-idle", 5*time.Minute, "idle timeout of CONNECT relays (0 = none)")

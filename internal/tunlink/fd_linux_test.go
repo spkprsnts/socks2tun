@@ -44,11 +44,18 @@ func listenAbstract(t *testing.T, name string) *fdListener {
 // false the connection is closed without acknowledging.
 func (l *fdListener) receive(t *testing.T, ack bool) int {
 	t.Helper()
+	fd, c := l.receiveOpen(t, ack)
+	unix.Close(c)
+	return fd
+}
+
+// receiveOpen is receive that leaves the connection c open for the caller.
+func (l *fdListener) receiveOpen(t *testing.T, ack bool) (fd, c int) {
+	t.Helper()
 	c, _, err := unix.Accept(l.fd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unix.Close(c)
 	buf := make([]byte, 1)
 	oob := make([]byte, unix.CmsgSpace(4))
 	n, oobn, _, _, err := unix.Recvmsg(c, buf, oob, 0)
@@ -66,7 +73,7 @@ func (l *fdListener) receive(t *testing.T, ack bool) int {
 	if ack {
 		unix.Write(c, []byte{1})
 	}
-	return fds[0]
+	return fds[0], c
 }
 
 func sameFile(t *testing.T, a, b int) bool {
@@ -91,7 +98,7 @@ func TestSendFDWithRetryAndReplacement(t *testing.T) {
 
 	// The core starts after us: the sender must keep retrying.
 	sent := make(chan error, 1)
-	go func() { sent <- SendFDRetry(context.Background(), name, theirs, 5*time.Second) }()
+	go func() { sent <- SendFDRetry(context.Background(), name, theirs, 5*time.Second, false) }()
 	time.Sleep(300 * time.Millisecond)
 	l := listenAbstract(t, name)
 	got := l.receive(t, true)
@@ -120,7 +127,7 @@ func TestSendFDWithRetryAndReplacement(t *testing.T) {
 	}
 	defer ours2.Close()
 	defer unix.Close(theirs2)
-	go func() { sent <- SendFD(name, theirs2) }()
+	go func() { sent <- SendFD(name, theirs2, false) }()
 	got2 := l.receive(t, true)
 	defer unix.Close(got2)
 	if err := <-sent; err != nil {
@@ -140,7 +147,7 @@ func TestSendFDWithoutAck(t *testing.T) {
 	}
 	defer unix.Close(theirs)
 	sent := make(chan error, 1)
-	go func() { sent <- SendFD(name, theirs) }()
+	go func() { sent <- SendFD(name, theirs, false) }()
 	unix.Close(l.receive(t, false))
 	if err := <-sent; err == nil || !strings.Contains(err.Error(), "without ack") {
 		t.Fatalf("got %v, want missing ack error", err)
@@ -150,11 +157,68 @@ func TestSendFDWithoutAck(t *testing.T) {
 func TestSendFDRetryTimeout(t *testing.T) {
 	retryPause = 50 * time.Millisecond
 	start := time.Now()
-	err := SendFDRetry(context.Background(), uniqueName(), 0, 300*time.Millisecond)
+	err := SendFDRetry(context.Background(), uniqueName(), 0, 300*time.Millisecond, false)
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
 	if el := time.Since(start); el > 2*time.Second {
 		t.Fatalf("took %v", el)
+	}
+}
+
+// PaperFlux-style cores take the descriptor and close the connection (or stay
+// silent) instead of acknowledging; with noAck that is a successful delivery.
+func TestSendFDNoAck(t *testing.T) {
+	ackTimeout = 200 * time.Millisecond
+	defer func() { ackTimeout = 5 * time.Second }()
+
+	cases := []struct {
+		name string
+		core func(t *testing.T, l *fdListener) (fd int)
+	}{
+		{"core closes without ack", func(t *testing.T, l *fdListener) int { return l.receive(t, false) }},
+		{"core acks", func(t *testing.T, l *fdListener) int { return l.receive(t, true) }},
+		{"core stays silent", func(t *testing.T, l *fdListener) int {
+			fd, c := l.receiveOpen(t, false)
+			t.Cleanup(func() { unix.Close(c) })
+			return fd
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name := uniqueName()
+			l := listenAbstract(t, name)
+			_, theirs, err := NewPair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer unix.Close(theirs)
+			sent := make(chan error, 1)
+			go func() { sent <- SendFDRetry(context.Background(), name, theirs, 2*time.Second, true) }()
+			got := tc.core(t, l)
+			defer unix.Close(got)
+			select {
+			case err := <-sent:
+				if err != nil {
+					t.Fatalf("noAck delivery failed: %v", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("noAck delivery did not finish")
+			}
+			if !sameFile(t, got, theirs) {
+				t.Fatal("received descriptor is not the one sent")
+			}
+		})
+	}
+}
+
+func TestSendFDNoAckConnectFails(t *testing.T) {
+	_, theirs, err := NewPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(theirs)
+	if err := SendFD(uniqueName(), theirs, true); err == nil {
+		t.Fatal("noAck must still fail when nobody listens")
 	}
 }

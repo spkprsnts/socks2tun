@@ -36,6 +36,7 @@ type Config struct {
 
 	User, Pass     string
 	UDSTimeout     time.Duration // 0 = retry forever
+	NoAck          bool          // the core does not acknowledge the descriptor
 	ConnectTimeout time.Duration
 	TCPIdle        time.Duration
 	UDPIdle        time.Duration
@@ -187,7 +188,7 @@ func (a *app) runTun(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		err = tunlink.SendFDRetry(ctx, a.cfg.TunUDS, theirs, a.cfg.UDSTimeout)
+		err = tunlink.SendFDRetry(ctx, a.cfg.TunUDS, theirs, a.cfg.UDSTimeout, a.cfg.NoAck)
 		tunlink.CloseFD(theirs) // the core holds its own duplicate now
 		if err != nil {
 			ours.Close()

@@ -454,7 +454,7 @@ func TestTunUDSReplacement(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	lfd := listenAbstract(t, name)
 
-	f1 := receiveFD(t, lfd)
+	f1 := receiveFD(t, lfd, true)
 	stop1 := inet.attach(f1)
 	if got := whoami(t, h.socks); got != "10.0.0.2" {
 		t.Fatalf("first descriptor: server saw %q", got)
@@ -463,10 +463,44 @@ func TestTunUDSReplacement(t *testing.T) {
 	// The core drops its descriptor (e.g. restarts): socks2tun must create a
 	// new pair and hand it over again.
 	stop1()
-	f2 := receiveFD(t, lfd)
+	f2 := receiveFD(t, lfd, true)
 	defer inet.attach(f2)()
 	if got := whoami(t, h.socks); got != "10.0.0.2" {
 		t.Fatalf("replacement descriptor: server saw %q", got)
+	}
+}
+
+// A PaperFlux-style core takes the descriptor, closes the connection without
+// an ack and stops listening. With NoAck the app must start using its end.
+func TestTunUDSNoAck(t *testing.T) {
+	name := fmt.Sprintf("s2t-noack-test-%d-%d", os.Getpid(), mrand.Uint64())
+	inet := newInternet(t)
+	// Not listenAbstract: this listener is closed by the test itself.
+	lfd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Bind(lfd, &unix.SockaddrUnix{Name: "@" + name}); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Listen(lfd, 4); err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, app.Config{
+		TunUDS:     name,
+		NoAck:      true,
+		UDSTimeout: 10 * time.Second,
+		Net: control.Config{
+			IP:  netip.MustParseAddr("10.0.0.2"),
+			DNS: []netip.Addr{dnsIP},
+			MTU: 1280,
+		},
+	})
+	f := receiveFD(t, lfd, false)
+	unix.Close(lfd) // the core stops listening after the first descriptor
+	t.Cleanup(inet.attach(f))
+	if got := whoami(t, h.socks); got != "10.0.0.2" {
+		t.Fatalf("server saw %q", got)
 	}
 }
 
@@ -487,8 +521,8 @@ func listenAbstract(t *testing.T, name string) int {
 }
 
 // receiveFD does what CSQTT's FdReceiver does: accept, receive the byte and
-// descriptor, acknowledge with one byte.
-func receiveFD(t *testing.T, lfd int) *os.File {
+// descriptor, acknowledge with one byte (unless ack is false, as PaperFlux).
+func receiveFD(t *testing.T, lfd int, ack bool) *os.File {
 	t.Helper()
 	tv := unix.NsecToTimeval((10 * time.Second).Nanoseconds())
 	unix.SetsockoptTimeval(lfd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
@@ -510,8 +544,10 @@ func receiveFD(t *testing.T, lfd int) *os.File {
 	if err != nil || len(fds) != 1 {
 		t.Fatalf("rights: %v", err)
 	}
-	if _, err := unix.Write(c, []byte{1}); err != nil {
-		t.Fatal(err)
+	if ack {
+		if _, err := unix.Write(c, []byte{1}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f, err := tunlink.FileFromFD(fds[0], "core")
 	if err != nil {

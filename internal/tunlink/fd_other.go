@@ -20,8 +20,8 @@ func FileFromFD(fd int, name string) (*os.File, error) { return nil, errUnsuppor
 
 func CloseFD(fd int) error { return errUnsupported }
 
-func SendFD(name string, fd int) error { return errUnsupported }
+func SendFD(name string, fd int, noAck bool) error { return errUnsupported }
 
-func SendFDRetry(ctx context.Context, name string, fd int, timeout time.Duration) error {
+func SendFDRetry(ctx context.Context, name string, fd int, timeout time.Duration, noAck bool) error {
 	return errUnsupported
 }
